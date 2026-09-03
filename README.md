@@ -17,6 +17,11 @@ It is a companion to [Towerman](https://github.com/tskupinski/towerman) and
 wears the same colors, but it needs neither Towerman nor its hooks. All it
 needs is tmux, Node 18+, and Claude Code.
 
+The `claude-runner` binary is a small POSIX-sh launcher that finds `node`
+itself - on `PATH`, else through `asdf`, else a common install location - so it
+runs from tmux popups and Claude Code hooks, whose minimal environment often
+lacks a version manager's shims on `PATH`.
+
 ## What it captures
 
 From the reply that just finished, in order:

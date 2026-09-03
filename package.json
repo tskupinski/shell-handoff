@@ -11,7 +11,7 @@
 	},
 	"type": "module",
 	"bin": {
-		"claude-runner": "src/cli.js"
+		"claude-runner": "bin/claude-runner"
 	},
 	"engines": {
 		"node": ">=18"
