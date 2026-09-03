@@ -1,0 +1,19 @@
+{
+	"name": "claude-runner",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Send the shell commands Claude Code hands you into a tmux pane, from a popup",
+	"license": "Apache-2.0",
+	"author": "Tomasz Skupiński",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tskupinski/claude-runner.git"
+	},
+	"type": "module",
+	"bin": {
+		"claude-runner": "src/cli.js"
+	},
+	"engines": {
+		"node": ">=18"
+	}
+}
