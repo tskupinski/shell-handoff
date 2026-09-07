@@ -13,6 +13,9 @@
 	"bin": {
 		"claude-runner": "bin/claude-runner"
 	},
+	"scripts": {
+		"test": "node --test"
+	},
 	"engines": {
 		"node": ">=18"
 	}

@@ -24,17 +24,27 @@ lacks a version manager's shims on `PATH`.
 
 ## What it captures
 
-From the reply that just finished, in order:
+From the reply that just finished, in two tiers. First, what Claude asked you
+to run:
 
-- **`! ` lines** in Claude's text. Claude Code already suggests commands this
-  way ("type `! foo` in the session"). No convention on your side required.
+- **`! ` lines** in Claude's text, one item per line. Claude Code already
+  suggests commands this way ("type `! foo` in the session"), so this works
+  with no convention on your side.
+- **Snippets** - a fenced block tagged `run`, like ```` ```bash run ````. The
+  whole block is one item, sent as a unit: a heredoc, a few dependent lines,
+  anything that should not be split.
 - **Denied Bash calls** - a command Claude tried to run that the sandbox, the
   auto-mode classifier, or you rejected. You get the exact command it wanted,
   not a paraphrase.
 
-If you want Claude to hand off commands deliberately, tell it (in `CLAUDE.md`)
-to put each on its own line starting with `! ` inside a bash code block. It
-works without that; the convention just makes it tidy.
+Then, under a rule, **every other code block** in the reply, any language,
+labeled with its language and line count. Not something Claude asked you to
+run, but there if you want it - a config pasted into an editor pane, say.
+
+To have Claude hand things off deliberately, tell it in `CLAUDE.md`: single
+commands as `! ` lines in a bash block, a multi-line unit as a ```` ```bash run ````
+block. Without the convention everything still shows up, just in the lower
+tier.
 
 ## How it works
 
@@ -93,19 +103,31 @@ claude-runner doctor
 
 ## Use
 
-After a reply where Claude hands you commands, press your prefix + `e` in the
-Claude pane. Mark commands with space (or `a` for all), press enter to send.
+After a reply where Claude hands you something, press your prefix + `e` in the
+Claude pane. The highlighted item shows in full under the list. Mark items with
+space (or `a` for all), then:
+
+- **⏎ runs** them in the runner pane: typed line by line, Enter after each.
+  Right for shells, heredocs, REPLs.
+- **`p` pastes** them as one bracketed paste with no Enter. The shell shows the
+  whole thing and waits, so you can read or edit before running. Also the mode
+  for an editor pane.
+- **`y` copies** them to a tmux paste buffer and the system clipboard (pbcopy,
+  wl-copy, xclip or xsel, whichever exists), then closes.
+
 The first time in a window it asks which pane is the runner; after that it goes
 straight to the list. `r` changes the runner pane.
 
 ## Keys
 
-| Key | In the command list | In the pane picker |
-|-----|---------------------|--------------------|
+| Key | In the list | In a pane picker |
+|-----|-------------|------------------|
 | ↑ ↓ / k j | move | move |
 | space | mark / unmark | |
 | a | mark all / none | |
-| ⏎ | send marked (or the one under the cursor) | choose this pane |
+| ⏎ | run marked (or the highlighted one) | choose this pane |
+| p | paste marked, no Enter | |
+| y | copy marked to clipboard + tmux buffer | |
 | r | pick a different runner pane | |
 | esc | | back to the list |
 | q / esc / ctrl-c | quit | |

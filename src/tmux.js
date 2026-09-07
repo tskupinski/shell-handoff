@@ -1,6 +1,7 @@
-// Every tmux call the tool makes. Self-contained: no dependency on Towerman.
+// Every tmux call the tool makes, plus the clipboard. Self-contained: no
+// dependency on Towerman.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 
 const TMUX = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"].find(existsSync) ?? "tmux";
@@ -18,6 +19,16 @@ export function tmux(args) {
 			if (err) reject(err);
 			else resolve(stdout.replace(/\n+$/, ""));
 		});
+	});
+}
+
+// Run a command with `input` on its stdin; resolves when it exits cleanly.
+function pipeTo(cmd, args, input) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(cmd, args, { env: ENV, stdio: ["pipe", "ignore", "ignore"] });
+		child.on("error", reject);
+		child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+		child.stdin.end(input);
 	});
 }
 
@@ -69,12 +80,39 @@ export async function capturePane(pane, lines = 6) {
 	return rows.slice(-lines);
 }
 
-// Send a command to the runner pane one line at a time - each line typed
-// literally, then Enter, so a multi-line command runs line by line the way I
-// would type it.
-export async function sendCommand(pane, command) {
-	for (const line of command.split("\n")) {
+// Type text into the pane one line at a time - each line literally, then
+// Enter - so a multi-line item runs line by line the way I would type it.
+export async function typeText(pane, text) {
+	for (const line of text.split("\n")) {
 		await tmux(["send-keys", "-t", pane, "-l", "--", line]);
 		await tmux(["send-keys", "-t", pane, "Enter"]);
 	}
 }
+
+// Paste text into the pane as one bracketed paste, with no Enter: the shell
+// (or editor, or REPL) shows it whole and waits, so I can read or edit it
+// before running.
+export async function pasteText(pane, text) {
+	await pipeTo(TMUX, ["load-buffer", "-b", "claude-runner", "-"], text);
+	await tmux(["paste-buffer", "-p", "-d", "-b", "claude-runner", "-t", pane]);
+}
+
+const CLIPBOARDS = [
+	["pbcopy", []],
+	["wl-copy", []],
+	["xclip", ["-selection", "clipboard"]],
+	["xsel", ["--clipboard", "--input"]],
+];
+
+// Copy text to a tmux paste buffer and, when one is available, the system
+// clipboard. Returns the name of the clipboard tool used, or null.
+export async function copyText(text) {
+	await pipeTo(TMUX, ["load-buffer", "-b", "claude-runner-copy", "-"], text).catch(() => {});
+	for (const [cmd, args] of CLIPBOARDS) {
+		const ok = await pipeTo(cmd, args, text).then(() => true, () => false);
+		if (ok) return cmd;
+	}
+	return null;
+}
+
+export const flash = (pane, message) => tmux(["display-message", "-t", pane, message]).catch(() => {});
