@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// claude-runner: send the shell commands Claude Code hands you into a tmux pane.
+// shell-handoff: send the shell commands Claude Code hands you into a tmux pane.
 //
 //   capture   Stop hook - reads the hook event JSON on stdin, stashes this
 //             pane's hand-off commands (the "! " lines and denied Bash calls)
-//   pick      the popup - choose commands, choose a runner pane, send them
+//   pick      the popup - choose commands, choose a runner pane, send them;
+//             `o` brings the runner's output back into Claude
 //   doctor    check the hook + tmux wiring
 //
 // See README.md for how to wire it up.
@@ -12,13 +13,13 @@ import { capture } from "./capture.js";
 import { doctor } from "./doctor.js";
 import { pick } from "./tui.js";
 
-const HELP = `claude-runner - run the commands Claude hands you, in a tmux pane
+const HELP = `shell-handoff - run the commands Claude hands you, in a tmux pane
 
 usage:
-  claude-runner capture      Stop hook: stash this pane's commands (hook JSON on stdin)
-  claude-runner pick [pane]  popup: pick commands and send them to a runner pane
-  claude-runner doctor       check the Claude Code hook and tmux binding
-  claude-runner help
+  shell-handoff capture      Stop hook: stash this pane's commands (hook JSON on stdin)
+  shell-handoff pick [pane]  popup: pick commands and send them to a runner pane
+  shell-handoff doctor       check the Claude Code hook and tmux binding
+  shell-handoff help
 `;
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -40,6 +41,6 @@ switch (cmd) {
 		process.stdout.write(HELP);
 		break;
 	default:
-		process.stderr.write(`claude-runner: unknown command "${cmd}"\n\n${HELP}`);
+		process.stderr.write(`shell-handoff: unknown command "${cmd}"\n\n${HELP}`);
 		process.exit(1);
 }

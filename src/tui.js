@@ -6,20 +6,27 @@
 // denied calls), then, under a rule, every other code block from the reply.
 // The highlighted item shows in full below the list, so nothing is sent blind.
 //
+// After a send, `o` closes the loop: what the runner pane has shown since is
+// pasted into the Claude pane as a prompt, without Enter, for me to read and
+// add to before submitting.
+//
 // When the pane it opened on has nothing captured (you pressed the key in the
 // wrong pane, or the reply had no code), it does not vanish: it either lists
 // the panes that do have items to pick from, or says so and waits.
 
 import { C, style } from "./palette.js";
-import { listCaptures, readItems } from "./store.js";
+import { cleanOutput, formatReport, isShell } from "./output.js";
+import { listCaptures, readItems, readRun, writeRun } from "./store.js";
 import { PRIMARY_KINDS } from "./transcript.js";
 import {
 	capturePane,
+	captureSince,
 	clearRunner,
 	copyText,
 	currentPane,
 	flash,
 	getRunner,
+	outputMark,
 	paneExists,
 	paneLabel,
 	pasteText,
@@ -33,7 +40,8 @@ const ALT_ON = "\x1b[?1049h\x1b[?25l";
 const ALT_OFF = "\x1b[?25h\x1b[?1049l";
 const CLEAR = "\x1b[H\x1b[2J";
 
-const clip = (s, w) => (s.length > w ? `${s.slice(0, Math.max(0, w - 1))}…` : s);
+const visibleText = (s) => s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+const clip = (text, w) => { const s = visibleText(text); return (s.length > w ? `${s.slice(0, Math.max(0, w - 1))}…` : s); };
 const firstLine = (text) => text.split("\n").find((l) => l.trim()) ?? "";
 const lineCount = (text) => text.split("\n").length;
 
@@ -47,14 +55,14 @@ function badge(item) {
 
 async function resolveRunner(src) {
 	const r = await getRunner(src);
-	if (r && (await paneExists(r))) return r;
+	if (r && r !== src && (await paneExists(r))) return r;
 	return null;
 }
 
 export async function pick(srcArg) {
 	const out = process.stdout;
 	if (!process.stdin.isTTY || !out.isTTY) {
-		process.stderr.write("claude-runner pick needs a terminal (run it from a tmux popup)\n");
+		process.stderr.write("shell-handoff pick needs a terminal (run it from a tmux popup)\n");
 		process.exit(1);
 	}
 
@@ -66,11 +74,15 @@ export async function pick(srcArg) {
 	// none anywhere, mode "empty" just waits.
 	let source = openedOn;
 	let items = await readItems(source);
+	let runner = await resolveRunner(source);
+	// Whether the runner has something to report back; only decides what the
+	// empty screen offers, `o` itself re-reads the run.
+	const hasRun = runner ? (await readRun(runner))?.source === source : false;
 	const primaryCount = () => items.filter((it) => PRIMARY_KINDS.has(it.kind)).length;
 
 	let cursor = 0;
+	let previewOffset = 0;
 	const marked = new Set();
-	let runner = null;
 	let runnerPeek = [];
 	let message = "";
 
@@ -91,14 +103,13 @@ export async function pick(srcArg) {
 				others.push({ id: c.pane, label: `${await paneLabel(c.pane)}  ·  ${c.items.length} item${c.items.length === 1 ? "" : "s"}`, items: c.items });
 			}
 		}
-		if (others.length > 0) {
+		if (others.length > 0 && !hasRun) {
 			mode = "source";
 			choices = others;
 		} else {
 			mode = "empty";
 		}
 	} else {
-		runner = await resolveRunner(source);
 		await refreshRunnerPeek();
 	}
 
@@ -110,23 +121,24 @@ export async function pick(srcArg) {
 	const layout = () => {
 		const divider = primaryCount() > 0 && primaryCount() < items.length ? 1 : 0;
 		const fixed = 7; // title, blank, runner, blank, [list], blank, footer
-		const spare = rows() - fixed - items.length - divider;
+		const visible = Math.min(items.length, Math.max(1, rows() - 14));
+		const spare = rows() - fixed - visible - divider;
 		let preview = 0;
 		let peek = 0;
 		if (spare >= 3) preview = Math.min(8, spare - 1); // one row for its rule
 		const rest = spare - (preview ? preview + 1 : 0);
 		if (runner && rest >= 3) peek = Math.min(runnerPeek.length, rest - 1);
-		return { preview, peek };
+		return { preview, peek, visible };
 	};
 
 	const rule = (label, w) => ` ${style(`─${label}${"─".repeat(Math.max(0, Math.min(w - 3, 60) - label.length))}`, { fg: C.panel })}`;
 
 	const renderList = async () => {
 		const w = cols();
-		const { preview, peek } = layout();
+		const { preview, peek, visible } = layout();
 		const lines = [];
 		const n = primaryCount();
-		lines.push(` ${style("CLAUDE RUNNER", { fg: C.accent, bold: true })} ${style(`· ${n} to run${items.length > n ? `, ${items.length - n} more block${items.length - n === 1 ? "" : "s"}` : ""}`, { fg: C.muted })}`);
+		lines.push(` ${style("SHELL HANDOFF", { fg: C.accent, bold: true })} ${style(`· ${n} to run${items.length > n ? `, ${items.length - n} more block${items.length - n === 1 ? "" : "s"}` : ""}`, { fg: C.muted })}`);
 		lines.push("");
 		if (runner) {
 			lines.push(` ${style("→ runner", { fg: C.green })} ${style(clip(await paneLabel(runner), w - 12), { fg: C.fg })}`);
@@ -134,7 +146,9 @@ export async function pick(srcArg) {
 			lines.push(` ${style("→ runner", { fg: C.yellow })} ${style("none yet - you pick one when you send", { fg: C.muted })}`);
 		}
 		lines.push("");
-		items.forEach((item, i) => {
+		const start = Math.max(0, Math.min(cursor - Math.floor(visible / 2), items.length - visible));
+		items.slice(start, start + visible).forEach((item, offset) => {
+			const i = start + offset;
 			if (i === n && n > 0) lines.push(rule(" other code in the reply ", w));
 			const here = i === cursor;
 			const box = marked.has(i) ? style("[x]", { fg: C.green }) : style("[ ]", { fg: C.muted });
@@ -158,7 +172,7 @@ export async function pick(srcArg) {
 			for (const l of runnerPeek.slice(-peek)) lines.push(`  ${style(clip(l, w - 4), { fg: C.muted })}`);
 		}
 		lines.push("");
-		const help = "↑↓ move · space mark · a all · ⏎ run · p paste · y copy · r runner · q quit";
+		const help = "↑↓ move · space mark · a all · v full preview · ⏎ run · p paste · y copy · o output→claude · r runner · q quit";
 		lines.push(message ? ` ${style(message, { fg: C.yellow })}` : ` ${style(help, { fg: C.muted })}`);
 		out.write(CLEAR + lines.join("\r\n"));
 	};
@@ -166,7 +180,10 @@ export async function pick(srcArg) {
 	const renderChoices = (title, hint) => {
 		const w = cols();
 		const lines = [` ${style(title, { fg: C.accent, bold: true })}`, ""];
-		choices.forEach((p, i) => {
+		const visible = Math.max(1, rows() - 5);
+		const start = Math.max(0, Math.min(choiceCursor - Math.floor(visible / 2), choices.length - visible));
+		choices.slice(start, start + visible).forEach((p, offset) => {
+			const i = start + offset;
 			const here = i === choiceCursor;
 			const arrow = here ? style("❯", { fg: C.accent, bold: true }) : " ";
 			const text = clip(p.label, w - 6);
@@ -179,7 +196,7 @@ export async function pick(srcArg) {
 
 	const renderEmpty = () => {
 		const lines = [
-			` ${style("CLAUDE RUNNER", { fg: C.accent, bold: true })}`,
+			` ${style("SHELL HANDOFF", { fg: C.accent, bold: true })}`,
 			"",
 			` ${style("Nothing captured for this pane yet.", { fg: C.yellow })}`,
 			"",
@@ -188,22 +205,46 @@ export async function pick(srcArg) {
 			` ${style("code block, or a denied command.", { fg: C.muted })}`,
 			"",
 			` ${style("If nothing ever appears, the Stop hook is not wired: run", { fg: C.muted })}`,
-			` ${style("claude-runner doctor", { fg: C.fg })}`,
+			` ${style("shell-handoff doctor", { fg: C.fg })}`,
 			"",
-			` ${style("any key to close", { fg: C.muted })}`,
 		];
+		if (hasRun) {
+			lines.push(` ${style("o", { fg: C.fg })} ${style("paste the runner pane's output into Claude", { fg: C.muted })}`);
+			lines.push("");
+		}
+		if (message) lines.push(` ${message}`);
+		lines.push(` ${style("any key to close", { fg: C.muted })}`);
 		out.write(CLEAR + lines.join("\r\n"));
 	};
 
+	const renderPreview = () => {
+		const width = Math.max(1, cols() - 4);
+		const content = items[cursor].text.split("\n").flatMap((line) => {
+			const chars = Array.from(visibleText(line).replace(/\t/g, "    "));
+			const chunks = [];
+			for (let i = 0; i < chars.length; i += width) chunks.push(chars.slice(i, i + width).join(""));
+			return chunks.length ? chunks : [""];
+		});
+		const height = Math.max(1, rows() - 4);
+		previewOffset = Math.min(previewOffset, Math.max(0, content.length - height));
+		out.write(CLEAR + [" FULL COMMAND · ↑↓ / j k scroll · esc back", "",
+			...content.slice(previewOffset, previewOffset + height).map((line) => `  ${line}`),
+			` ${previewOffset + 1}-${Math.min(content.length, previewOffset + height)} / ${content.length}`].join("\r\n"));
+	};
+
 	const render = () => {
+		if (mode === "preview") return renderPreview();
 		if (mode === "empty") return renderEmpty();
 		if (mode === "source") return renderChoices("PICK A PANE WITH ITEMS", "↑↓ move · ⏎ choose · q quit");
 		if (mode === "panes") return renderChoices("WHERE SHOULD IT GO?", "↑↓ move · ⏎ choose · esc back");
 		return renderList();
 	};
 
+	let cleaned = false;
 	const cleanup = () => {
-		process.stdin.setRawMode(false);
+		if (cleaned) return;
+		cleaned = true;
+		if (process.stdin.isTTY) process.stdin.setRawMode(false);
 		process.stdin.pause();
 		out.write(ALT_OFF);
 	};
@@ -220,7 +261,7 @@ export async function pick(srcArg) {
 		marked.clear();
 		runner = await resolveRunner(source);
 		await refreshRunnerPeek();
-		render();
+		return render();
 	};
 
 	const openPanePicker = async () => {
@@ -228,7 +269,7 @@ export async function pick(srcArg) {
 		choices = [...siblings, { id: "new", label: "＋ split a new pane below Claude" }];
 		choiceCursor = 0;
 		mode = "panes";
-		render();
+		return render();
 	};
 
 	const choosePane = async () => {
@@ -244,19 +285,45 @@ export async function pick(srcArg) {
 			pendingSend = null;
 			return send(how);
 		}
-		render();
+		return render();
 	};
 
 	// how: "type" runs each item line by line; "paste" pastes it whole, no Enter.
+	// The runner's position is marked first, so `o` can later pick up exactly
+	// what these items produced.
 	const send = async (how) => {
 		if (!runner) {
 			pendingSend = how;
 			return openPanePicker();
 		}
-		for (const item of selection()) {
-			if (how === "paste") await pasteText(runner, item.text);
-			else await typeText(runner, item.text);
+		const chosen = selection();
+		const mark = await outputMark(runner);
+		// Invalidate the previous report before any input can be partially sent.
+		await writeRun(runner, null);
+		if (runner === source || !(await paneExists(runner))) throw new Error("Runner pane is unavailable; press r to choose another pane");
+		const text = chosen.map((item) => item.text).join("\n");
+		if (how === "paste") await pasteText(runner, text);
+		else await typeText(runner, text);
+		await writeRun(runner, { source, mark, at: new Date().toISOString(), commands: chosen.map((it) => it.text) });
+		finish(0);
+	};
+
+	// Close the loop: what the runner pane has shown since the last send goes
+	// into the Claude pane as one bracketed paste. No Enter - it lands as a
+	// draft to read, trim or add to, then submit.
+	const report = async () => {
+		const run = runner ? await readRun(runner) : null;
+		if (!run) {
+			message = runner ? "nothing sent to the runner yet - run something first" : "no runner pane yet - run something first";
+			return render();
 		}
+		if (run.source !== source) throw new Error("The last run belongs to another Claude pane; open the popup there to return its output");
+		const { lines, command, warning } = await captureSince(runner, run.mark);
+		const idle = isShell(command);
+		const output = cleanOutput(lines, { idle });
+		await pasteText(source, [warning, formatReport({ commands: run.commands, lines: output, running: !idle })].filter(Boolean).join("\n\n"));
+		const n = output.length;
+		await flash(source, `shell-handoff: pasted ${n} line${n === 1 ? "" : "s"} of runner output into Claude - Enter to send`);
 		finish(0);
 	};
 
@@ -265,10 +332,13 @@ export async function pick(srcArg) {
 		const text = chosen.map((it) => it.text).join("\n");
 		const where = await copyText(text);
 		const n = lineCount(text);
-		await flash(source, `claude-runner: copied ${n} line${n === 1 ? "" : "s"} to ${where ? `${where} and ` : ""}the tmux buffer`);
+		await flash(source, `shell-handoff: copied ${n} line${n === 1 ? "" : "s"} to ${where ? `${where} and ` : ""}the tmux buffer`);
 		finish(0);
 	};
 
+	process.once("exit", cleanup);
+	process.once("SIGTERM", () => finish(143));
+	process.once("SIGINT", () => finish(130));
 	out.write(ALT_ON);
 	process.stdin.setRawMode(true);
 	process.stdin.resume();
@@ -276,36 +346,47 @@ export async function pick(srcArg) {
 	await render();
 
 	let busy = false;
+	out.on("resize", async () => {
+		if (busy || cleaned) return;
+		busy = true;
+		try { await render(); } catch { finish(1); } finally { busy = false; }
+	});
 	process.stdin.on("data", async (key) => {
 		if (busy) return;
 		busy = true;
 		try {
 			if (key === "\x03") return finish(0); // ctrl-c
 
-			if (mode === "empty") return finish(0);
+			if (mode === "preview") {
+				if (key === "\x1b" || key === "q") mode = "list";
+				else if (key === "j" || key === "\x1b[B") previewOffset++;
+				else if (key === "k" || key === "\x1b[A") previewOffset = Math.max(0, previewOffset - 1);
+				return await render();
+			}
+			if (mode === "empty") return key === "o" && hasRun ? await report() : finish(0);
 
 			if (mode === "source") {
-				if (key === "q") return finish(0);
+				if (key === "q" || key === "\x1b") return finish(0);
 				if (key === "\x1b[A" || key === "k") choiceCursor = Math.max(0, choiceCursor - 1);
 				else if (key === "\x1b[B" || key === "j") choiceCursor = Math.min(choices.length - 1, choiceCursor + 1);
 				else if (key === "\r") {
 					source = choices[choiceCursor].id;
 					items = choices[choiceCursor].items;
-					return enterList();
+					return await enterList();
 				}
-				return render();
+				return await render();
 			}
 
 			if (mode === "panes") {
 				if (key === "\x1b") {
 					mode = "list";
 					pendingSend = null;
-					return render();
+					return await render();
 				}
 				if (key === "\x1b[A" || key === "k") choiceCursor = Math.max(0, choiceCursor - 1);
 				else if (key === "\x1b[B" || key === "j") choiceCursor = Math.min(choices.length - 1, choiceCursor + 1);
-				else if (key === "\r") return choosePane();
-				return render();
+				else if (key === "\r") return await choosePane();
+				return await render();
 			}
 
 			// list mode
@@ -322,11 +403,16 @@ export async function pick(srcArg) {
 				await clearRunner(source);
 				runner = null;
 				runnerPeek = [];
-				return openPanePicker();
-			} else if (key === "\r") return send("type");
-			else if (key === "p") return send("paste");
-			else if (key === "y") return copy();
-			render();
+				return await openPanePicker();
+			} else if (key === "\r") return await send("type");
+			else if (key === "p") return await send("paste");
+			else if (key === "y") return await copy();
+			else if (key === "o") return await report();
+			else if (key === "v") { mode = "preview"; previewOffset = 0; }
+			await render();
+		} catch (error) {
+			message = error.message;
+			try { await render(); } catch { finish(1); }
 		} finally {
 			busy = false;
 		}

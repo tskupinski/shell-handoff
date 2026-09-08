@@ -2,6 +2,7 @@
 // dependency on Towerman.
 
 import { execFile, spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 
 const TMUX = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"].find(existsSync) ?? "tmux";
@@ -15,7 +16,7 @@ const ENV =
 
 export function tmux(args) {
 	return new Promise((resolve, reject) => {
-		execFile(TMUX, args, { timeout: 3000, env: ENV }, (err, stdout) => {
+		execFile(TMUX, args, { timeout: 3000, maxBuffer: 16 * 1024 * 1024, env: ENV }, (err, stdout) => {
 			if (err) reject(err);
 			else resolve(stdout.replace(/\n+$/, ""));
 		});
@@ -25,9 +26,10 @@ export function tmux(args) {
 // Run a command with `input` on its stdin; resolves when it exits cleanly.
 function pipeTo(cmd, args, input) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(cmd, args, { env: ENV, stdio: ["pipe", "ignore", "ignore"] });
+		const child = spawn(cmd, args, { env: ENV, stdio: ["pipe", "ignore", "ignore"], timeout: 3000 });
 		child.on("error", reject);
 		child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+		child.stdin.on("error", reject);
 		child.stdin.end(input);
 	});
 }
@@ -62,11 +64,11 @@ export async function siblingPanes(src) {
 }
 
 export async function getRunner(src) {
-	const r = await tmux(["show-option", "-wqv", "-t", src, "@claude_runner"]).catch(() => "");
+	const r = await tmux(["show-option", "-wqv", "-t", src, "@shell_handoff"]).catch(() => "");
 	return r || null;
 }
-export const setRunner = (src, pane) => tmux(["set-option", "-w", "-t", src, "@claude_runner", pane]);
-export const clearRunner = (src) => tmux(["set-option", "-w", "-t", src, "-u", "@claude_runner"]).catch(() => {});
+export const setRunner = (src, pane) => tmux(["set-option", "-w", "-t", src, "@shell_handoff", pane]);
+export const clearRunner = (src) => tmux(["set-option", "-w", "-t", src, "-u", "@shell_handoff"]).catch(() => {});
 
 export async function splitBelow(src) {
 	const cwd = await tmux(["display-message", "-p", "-t", src, "#{pane_current_path}"]);
@@ -78,6 +80,30 @@ export async function capturePane(pane, lines = 6) {
 	const rows = out.split("\n");
 	while (rows.length > 0 && rows[rows.length - 1].trim() === "") rows.pop();
 	return rows.slice(-lines);
+}
+
+const paneNumbers = async (pane, fmt) => (await tmux(["display-message", "-p", "-t", pane, fmt])).split(" ");
+
+// Keep a fingerprint of the rows before the send. If history is evicted,
+// cleared, or reflowed, refuse to treat the old offset as an exact boundary.
+const digest = (rows) => createHash("sha256").update(rows.join("\n")).digest("hex");
+export async function outputMark(pane) {
+	const [history, cursor] = await paneNumbers(pane, "#{history_size} #{cursor_y}");
+	const line = Number(history) + Number(cursor);
+	const rows = (await tmux(["capture-pane", "-p", "-t", pane, "-S", "-", "-E", cursor])).split("\n");
+	return { line, prefix: digest(rows.slice(0, line)) };
+}
+
+export async function captureSince(pane, mark) {
+	const [history, cursor, command] = await paneNumbers(pane, "#{history_size} #{cursor_y} #{pane_current_command}");
+	const rows = (await tmux(["capture-pane", "-p", "-t", pane, "-S", "-", "-E", cursor])).split("\n");
+	const reliable = mark?.line > 0 && mark.line <= Number(history) + Number(cursor)
+		&& digest(rows.slice(0, mark.line)) === mark.prefix;
+	return {
+		lines: reliable ? rows.slice(mark.line) : rows,
+		command,
+		warning: reliable ? "" : "Output boundary unavailable: showing retained pane history, which may include earlier commands. History may have been cleared, resized, or discarded.",
+	};
 }
 
 // Type text into the pane one line at a time - each line literally, then
@@ -93,8 +119,13 @@ export async function typeText(pane, text) {
 // (or editor, or REPL) shows it whole and waits, so I can read or edit it
 // before running.
 export async function pasteText(pane, text) {
-	await pipeTo(TMUX, ["load-buffer", "-b", "claude-runner", "-"], text);
-	await tmux(["paste-buffer", "-p", "-d", "-b", "claude-runner", "-t", pane]);
+	const buffer = `shell-handoff-${randomUUID()}`;
+	await pipeTo(TMUX, ["load-buffer", "-b", buffer, "-"], text);
+	try {
+		await tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", pane]);
+	} finally {
+		await tmux(["delete-buffer", "-b", buffer]).catch(() => {});
+	}
 }
 
 const CLIPBOARDS = [
@@ -107,7 +138,7 @@ const CLIPBOARDS = [
 // Copy text to a tmux paste buffer and, when one is available, the system
 // clipboard. Returns the name of the clipboard tool used, or null.
 export async function copyText(text) {
-	await pipeTo(TMUX, ["load-buffer", "-b", "claude-runner-copy", "-"], text).catch(() => {});
+	await pipeTo(TMUX, ["load-buffer", "-b", "shell-handoff-copy", "-"], text);
 	for (const [cmd, args] of CLIPBOARDS) {
 		const ok = await pipeTo(cmd, args, text).then(() => true, () => false);
 		if (ok) return cmd;

@@ -1,4 +1,4 @@
-// `claude-runner doctor`: check that the two pieces of wiring are in place -
+// `shell-handoff doctor`: check that the two pieces of wiring are in place -
 // the Stop hook in Claude Code settings, and the tmux key binding. It reports;
 // it never edits anything.
 
@@ -18,13 +18,13 @@ async function checkHook() {
 	try {
 		settings = JSON.parse(await readFile(path, "utf8"));
 	} catch {
-		return bad(`no readable ${path} - add a Stop hook running "claude-runner capture"`);
+		return bad(`no readable ${path} - add a Stop hook running "shell-handoff capture"`);
 	}
 	const stop = settings.hooks?.Stop ?? [];
-	const wired = stop.some((g) => (g.hooks ?? []).some((h) => typeof h.command === "string" && h.command.includes("claude-runner capture")));
+	const wired = stop.some((g) => (g.hooks ?? []).some((h) => typeof h.command === "string" && h.command.includes("shell-handoff capture")));
 	return wired
-		? ok('Stop hook runs "claude-runner capture"')
-		: bad('no Stop hook found - add one running "claude-runner capture" to ~/.claude/settings.json');
+		? ok('Stop hook runs "shell-handoff capture"')
+		: bad('no Stop hook found - add one running "shell-handoff capture" to ~/.claude/settings.json');
 }
 
 async function checkBinding() {
@@ -34,10 +34,10 @@ async function checkBinding() {
 	} catch {
 		return info("tmux is not running - cannot check the key binding");
 	}
-	const bound = keys.split("\n").find((l) => l.includes("claude-runner pick"));
+	const bound = keys.split("\n").find((l) => l.includes("shell-handoff pick"));
 	return bound
 		? ok(`tmux binding: ${bound.trim().replace(/\s+/g, " ").slice(0, 80)}`)
-		: bad('no tmux binding - add e.g. bind-key e display-popup -E "claude-runner pick"');
+		: bad('no tmux binding - add e.g. bind-key e display-popup -E "shell-handoff pick"');
 }
 
 export async function doctor() {

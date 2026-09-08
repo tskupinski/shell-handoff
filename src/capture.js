@@ -23,8 +23,8 @@ export async function capture() {
 	let event = {};
 	try {
 		event = JSON.parse(await readStdin());
+		await writeItems(pane, await extractItems(event));
 	} catch {
 		return;
 	}
-	await writeItems(pane, await extractItems(event));
 }

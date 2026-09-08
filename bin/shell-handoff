@@ -1,12 +1,12 @@
 #!/bin/sh
-# Launcher for the claude-runner Node CLI.
+# Launcher for the shell-handoff Node CLI.
 #
 # This runs from tmux popups and Claude Code hooks, which get a minimal
 # environment - often without a version manager's shim directory on PATH, so a
 # bare `node` is not found. Resolve node ourselves, then exec the CLI. Kept as
 # POSIX sh so it needs nothing but a shell.
 
-# Resolve this script through any symlinks (e.g. ~/bin/claude-runner) to find
+# Resolve this script through any symlinks (e.g. ~/bin/shell-handoff) to find
 # the package root, so src/cli.js is located wherever the package lives.
 self=$0
 while [ -L "$self" ]; do
@@ -31,7 +31,7 @@ if [ -z "$node" ]; then
 	done
 fi
 if [ -z "$node" ]; then
-	echo "claude-runner: could not find a node binary on PATH or under asdf" >&2
+	echo "shell-handoff: could not find a node binary on PATH or under asdf" >&2
 	exit 1
 fi
 
