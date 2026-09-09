@@ -25,7 +25,7 @@ const FENCE_CLOSE = /^\s*(`{3,}|~{3,})\s*$/;
 const DENIED = /denied|doesn.t want to proceed|rejected/i;
 const RUN_TAGS = new Set(["run", "runner"]);
 
-export const PRIMARY_KINDS = new Set(["command", "snippet", "denied"]);
+export { PRIMARY_KINDS } from "./items.js";
 
 function bang(line) {
 	const m = line.match(BANG);

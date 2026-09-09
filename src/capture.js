@@ -1,10 +1,9 @@
-// The Claude Code Stop hook. Reads the hook event JSON on stdin, extracts the
+// Capture a completed reply. Reads event JSON from stdin or a supplied argument, extracts the
 // items from the finished turn, and stashes them for the pane the session
-// runs in. Outside tmux there is nowhere to send anything, so it is a no-op.
+// runs in. Outside a supported terminal there is no capture target, so it is a no-op.
 // It always exits 0: a hook that fails must never disrupt the session.
 
-import { extractItems } from "./transcript.js";
-import { writeItems } from "./store.js";
+import { createRuntime } from "./runtime.js";
 
 function readStdin() {
 	return new Promise((resolve) => {
@@ -17,13 +16,13 @@ function readStdin() {
 	});
 }
 
-export async function capture() {
-	const pane = process.env.TMUX_PANE;
-	if (!pane) return;
-	let event = {};
+export async function capture({ assistant, terminal, store } = createRuntime(), input) {
 	try {
-		event = JSON.parse(await readStdin());
-		await writeItems(pane, await extractItems(event));
+		const pane = await terminal.captureTarget();
+		if (!pane) return;
+		const event = JSON.parse(input ?? await readStdin());
+		if (assistant.acceptsEvent && !assistant.acceptsEvent(event)) return;
+		await store.writeItems(pane, await assistant.extractItems(event));
 	} catch {
 		return;
 	}

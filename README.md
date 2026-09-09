@@ -2,78 +2,16 @@
 
 Run assistant commands in your terminal. Bring the output back.
 
-Currently supports Claude Code and tmux, in the spirit of vim-tmux-runner.
+When your assistant gives you a shell command to run yourself, shell-handoff
+opens a picker, sends your selection to a runner pane, and brings the output
+back as a draft. It supports Claude Code and Codex CLI in tmux or Herdr, with one shortcut
+for both.
 
-When Claude Code hands you a shell command to run yourself - a login it cannot
-do, a step behind a permission prompt, anything it prefixes with `! ` - this
-pops up a list of those commands and sends the ones you pick to a shell pane.
-When the command has run, one more key pastes its output back into Claude as
-the next prompt.
+It is a companion to [Towerman](https://github.com/tskupinski/towerman), with the
+same colors but no dependency on it. Requires Node 18+ and a supported terminal adapter.
+No runtime dependencies or build step.
 
-```
-Claude Code ──Stop hook──▶ ~/.cache/shell-handoff/<server>/<pane>.json ──▶ popup (prefix e)
-     ▲                                                               │
-     │                                  tmux send-keys ◀── you pick ─┘
-     │                                        │
-     └── `o` pastes what the runner printed ◀─┘
-```
-
-It is a companion to [Towerman](https://github.com/tskupinski/towerman) and
-wears the same colors, but it needs neither Towerman nor its hooks. All it
-needs is tmux 3.2 or later (for `display-popup`), Node 18 or later, and Claude
-Code. No runtime dependencies.
-
-Everything stays on your machine. The hook stores the finished reply's code
-blocks and denied commands in `~/.cache/shell-handoff/`, nothing else, and
-nothing is sent anywhere.
-
-The `shell-handoff` binary is a small POSIX-sh launcher that finds `node`
-itself - on `PATH`, else through `asdf`, else a common install location - so it
-runs from tmux popups and Claude Code hooks, whose minimal environment often
-lacks a version manager's shims on `PATH`.
-
-## What it captures
-
-From the reply that just finished, in two tiers. First, what Claude asked you
-to run:
-
-- **`! ` lines** in Claude's text, one item per line. Claude Code already
-  suggests commands this way ("type `! foo` in the session"), so this works
-  with no convention on your side.
-- **Snippets** - a fenced block tagged `run`, like ```` ```bash run ````. The
-  whole block is one item, sent as a unit: a heredoc, a few dependent lines,
-  anything that should not be split.
-- **Denied Bash calls** - a command Claude tried to run that the sandbox, the
-  auto-mode classifier, or you rejected. You get the exact command it wanted,
-  not a paraphrase.
-
-Then, under a rule, **every other code block** in the reply, any language,
-labeled with its language and line count. Not something Claude asked you to
-run, but there if you want it - a config pasted into an editor pane, say.
-
-To have Claude hand things off deliberately, tell it in `CLAUDE.md`: single
-commands as `! ` lines in a bash block, a multi-line unit as a ```` ```bash run ````
-block. Without the convention everything still shows up, just in the lower
-tier.
-
-## How it works
-
-- **`shell-handoff capture`** is a Claude Code **Stop hook**. It reads the hook
-  event on stdin and writes the pane's command list to
-  `~/.cache/shell-handoff/<server>/<pane>.json`, replacing it every reply. It keys off
-  `$TMUX_PANE`, so outside tmux it does nothing. The final message is read from
-  the hook's `last_assistant_message` field, because the transcript file lags
-  the live conversation at Stop time; earlier turn content comes from the
-  transcript.
-- **`shell-handoff pick`** is the **popup**, bound to a tmux key. It lists the
-  captured commands, shows the runner pane (and a peek at its screen), and
-  sends the marked ones. The runner pane is remembered per window in the
-  `@shell_handoff` window option. With none set, or when it is gone, you pick
-  one on send: any other pane in the session, or a fresh split below. Each send
-  also records the runner pane's scrollback position and the commands sent in
-  `~/.cache/shell-handoff/<server>/runs/<runner>.json`, which is what `o` reads back.
-
-## Install
+## Install and setup
 
 ```sh
 git clone https://github.com/tskupinski/shell-handoff
@@ -84,51 +22,22 @@ npm link            # exposes the `shell-handoff` CLI (runs from src/, no build)
 Or skip `npm link` and symlink `bin/shell-handoff` somewhere on your `PATH`.
 The launcher resolves its own location through the symlink.
 
-**1. The Stop hook** - add to `~/.claude/settings.json`:
+Configure each assistant you use, then your terminal adapter:
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      { "matcher": "", "hooks": [
-        { "type": "command", "command": "shell-handoff capture", "timeout": 5 }
-      ] }
-    ]
-  }
-}
-```
+| Type | Guide | Setup |
+| --- | --- | --- |
+| Assistant | [Claude Code](docs/assistants/claude-code.md) | Stop hook and optional command-formatting instructions |
+| Assistant | [Codex CLI](docs/assistants/codex.md) | Capture notification and command-formatting instructions |
+| Terminal / multiplexer | [tmux](docs/terminals/tmux.md) | tmux 3.2+, shared popup shortcut and runner panes |
+| Terminal / multiplexer | [Herdr](docs/terminals/herdr.md) | Herdr 0.9.0, local socket API and popup shortcut |
 
-Open `/hooks` once (or restart) in running sessions so it loads.
-
-**2. The tmux binding** - in `~/.tmux.conf`:
-
-```tmux
-bind-key e display-popup -E -w 90% -h 70% "shell-handoff pick"
-```
-
-Reload with `tmux source-file ~/.tmux.conf`.
-
-**3. Check it:**
-
-```sh
-shell-handoff doctor
-```
-
-## Updating from claude-runner
-
-Run `npm link` again (or update your symlink to `bin/shell-handoff`), then
-change your Stop hook to `shell-handoff capture` and your tmux binding to
-`shell-handoff pick`. Reload the hook and tmux configuration as described above.
-
-The cache now lives under `~/.cache/shell-handoff/` (or
-`$XDG_CACHE_HOME/shell-handoff/`), and the runner window option is
-`@shell_handoff`. Old captures and runner selections are not migrated: finish
-a new Claude reply, then choose your runner pane again.
+Installing the CLI alone does not enable capture. Both assistants need their
+own capture configuration; the terminal shortcut is configured once.
 
 ## Use
 
-After a reply where Claude hands you something, press your prefix + `e` in the
-Claude pane. The highlighted item has a short preview under the list. Press `v` for the
+After a reply where your assistant hands you something, press your prefix + `e` in the
+assistant pane. The highlighted item has a short preview under the list. Press `v` for the
 full command, with wrapped lines and scrolling using arrows or `j`/`k`. Mark items with
 space (or `a` for all), then:
 
@@ -143,45 +52,56 @@ space (or `a` for all), then:
 The first time in a window it asks which pane is the runner; after that it goes
 straight to the list. `r` changes the runner pane.
 
-## Closing the loop
+## Using both assistants
 
-What Claude wants next is usually the output of the thing it asked you to run.
-After it has run, open the popup again and press **`o`**: everything the runner
-pane has shown since the send is pasted into the Claude pane as a prompt, in
-the shape
+`shell-handoff pick` automatically selects the assistant with the most recent
+capture in the current pane, including replies with no commands. Its title
+shows the selected assistant. After switching assistants in the same pane,
+finish one reply before opening the picker.
 
-    Ran `gcloud auth login` in a shell.
+If the current pane has no items, the source chooser can list captures from
+both assistants. Use `--assistant claude-code` or `--assistant codex` to override
+detection. Captures and run records are isolated by assistant. The runner
+selection is shared per tmux window or Herdr tab; use separate runner panes for different
+assistants to keep output from mixing.
 
-    Output:
+Terminal detection uses the Herdr pane environment when present, otherwise tmux.
+Use `--terminal tmux` or `--terminal herdr` to override it.
 
-    ```
-    ...
-    ```
+## What it captures
 
-It arrives as a bracketed paste with **no Enter**, so it sits in Claude's input
-as a draft: read it, cut what does not matter, add a question, then submit.
+- **Commands:** `! ` lines, one command per item.
+- **Snippets:** fences tagged `run` or `runner`, such as `bash run`. Each block
+  stays together, including dependent commands and heredocs.
+- **Denied commands:** rejected Bash tool calls, supported by Claude Code.
+- **Other code:** all other fenced blocks, shown below the primary items with
+  their language and line count.
 
-Details worth knowing:
+The assistant guides describe capture limits and provide copyable formatting
+instructions. Codex captures only its final reply; Claude Code also reads
+previous content from the completed turn's transcript.
 
-- Cache entries are isolated by tmux server lifetime. Older unscoped cache
-  entries are ignored; finish a new Claude reply to capture commands again.
-- A shared runner keeps only its latest run. Output can only be returned from
-  the source pane that sent that run.
-- Paste mode joins selected items with newlines into one paste. A pasted
-  command may still be awaiting execution when you request its output.
+## Returning output
 
-- Each send records the output boundary and a fingerprint of preceding rows.
-  If retained history no longer matches (for example after clearing, resizing,
-  or history overflow), the report explicitly labels a fallback to retained
-  pane history. Discarded output cannot be recovered. Output uses physical
-  terminal rows, so long lines can remain wrapped.
-- An idle shell's fresh prompt is dropped from the end. If the command is still
-  running (the pane's foreground process is not a shell), the output so far is
-  pasted and labeled as such.
-- Very long output is cut to its last 400 lines, and the paste says how many
-  were cut. The end is where the error is.
-- `o` also works from the "nothing captured" screen, when the reply that asked
-  for the command is no longer the latest one.
+After running a command, open the picker again and press **`o`**. The runner's
+output since the last send is pasted into the source assistant as a draft,
+with the command and fenced output. Nothing is submitted automatically: review
+or edit the draft, then press Enter yourself.
+
+A runner retains only the latest run record within each assistant's storage.
+Output can only be returned from the source pane that sent that run. Output is
+capped at its last 400 lines, and truncation or incomplete history is labeled.
+`o` also works on the empty screen if a previous run belongs to that pane.
+See the [tmux](docs/terminals/tmux.md#runner-panes-and-output) and
+[Herdr](docs/terminals/herdr.md#behavior-and-limits) guides for output capture limits.
+
+## Local storage
+
+Captures and run records stay under `~/.cache/shell-handoff/`, or
+`$XDG_CACHE_HOME/shell-handoff/`, isolated by assistant, terminal backend, and server identity.
+Each captured reply replaces the pane's previous items. Run records contain
+the commands sent, source pane, and output boundary. shell-handoff itself makes
+no network requests; returned output is pasted into your assistant's input.
 
 ## Keys
 
@@ -193,11 +113,29 @@ Details worth knowing:
 | ⏎ | run marked (or the highlighted one) | choose this pane |
 | p | paste marked, no Enter | |
 | y | copy marked to clipboard + tmux buffer | |
-| o | paste the runner pane's output since the last send into Claude | |
+| o | paste the runner pane's output since the last send into the assistant | |
 | v | open full command; ↑↓ / j k scroll, esc returns | |
 | r | pick a different runner pane | |
 | esc | | back to the list |
 | q / esc / ctrl-c | quit | |
+
+## Updating from claude-runner
+
+Run `npm link` again (or update your symlink to `bin/shell-handoff`), then
+change your Stop hook to `shell-handoff capture` and your tmux binding to
+`shell-handoff pick`. Reload the hook and tmux configuration in the assistant and terminal guides.
+
+The cache now lives under `~/.cache/shell-handoff/` (or
+`$XDG_CACHE_HOME/shell-handoff/`), and the runner window option is
+`@shell_handoff`. Old captures and runner selections are not migrated: finish
+a new assistant reply, then choose your runner pane again.
+
+## Integration development
+
+Setup guides live in `docs/assistants/` and `docs/terminals/`. The terminal
+category includes multiplexers such as tmux and can also cover other terminal
+backends. See [the integration contract](docs/integrations.md) for adapter
+interfaces, capabilities, and storage boundaries.
 
 ## License
 

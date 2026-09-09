@@ -15,26 +15,9 @@
 // the panes that do have items to pick from, or says so and waits.
 
 import { C, style } from "./palette.js";
-import { cleanOutput, formatReport, isShell } from "./output.js";
-import { listCaptures, readItems, readRun, writeRun } from "./store.js";
-import { PRIMARY_KINDS } from "./transcript.js";
-import {
-	capturePane,
-	captureSince,
-	clearRunner,
-	copyText,
-	currentPane,
-	flash,
-	getRunner,
-	outputMark,
-	paneExists,
-	paneLabel,
-	pasteText,
-	setRunner,
-	siblingPanes,
-	splitBelow,
-	typeText,
-} from "./tmux.js";
+import { createPickerRouter } from "./runtime.js";
+import { sendItems, returnOutput } from "./handoff.js";
+import { PRIMARY_KINDS } from "./items.js";
 
 const ALT_ON = "\x1b[?1049h\x1b[?25l";
 const ALT_OFF = "\x1b[?25h\x1b[?1049l";
@@ -53,20 +36,28 @@ function badge(item) {
 	return "";
 }
 
-async function resolveRunner(src) {
-	const r = await getRunner(src);
-	if (r && r !== src && (await paneExists(r))) return r;
-	return null;
-}
-
-export async function pick(srcArg) {
+export async function pick(srcArg, runtime) {
+	const router = runtime?.forSource ? runtime : runtime ? null : createPickerRouter();
+	if (router) runtime = undefined;
+	const terminal = runtime?.terminal ?? router.terminal;
+	const { capturePane, clearRunner, copyText, currentPane, flash, getRunner,
+		paneExists, paneLabel, setRunner, siblingPanes, splitBelow } = terminal;
+	const resolveRunner = async (src) => {
+		const runner = await getRunner(src);
+		return runner && runner !== src && await paneExists(runner) ? runner : null;
+	};
 	const out = process.stdout;
 	if (!process.stdin.isTTY || !out.isTTY) {
-		process.stderr.write("shell-handoff pick needs a terminal (run it from a tmux popup)\n");
+		process.stderr.write("shell-handoff pick needs an interactive terminal\n");
 		process.exit(1);
 	}
 
 	const openedOn = srcArg || (await currentPane());
+	runtime ??= await router.forSource(openedOn);
+	let { assistant, store } = runtime;
+	const listCaptures = () => router ? router.listCaptures() : store.listCaptures();
+	const readItems = (pane) => store.readItems(pane);
+	const readRun = (pane) => store.readRun(pane);
 
 	// Which pane's items we are showing, and the items themselves: the primary
 	// tier first, the other blocks after. When the pane we opened on is empty,
@@ -93,14 +84,14 @@ export async function pick(srcArg) {
 	let pendingSend = null; // the send mode to run after picking a runner
 
 	const refreshRunnerPeek = async () => {
-		runnerPeek = runner ? await capturePane(runner, 3) : [];
+		runnerPeek = runner && terminal.capabilities.preview ? await capturePane(runner, 3) : [];
 	};
 
 	if (items.length === 0) {
 		const others = [];
 		for (const c of await listCaptures()) {
 			if (c.pane !== openedOn && (await paneExists(c.pane))) {
-				others.push({ id: c.pane, label: `${await paneLabel(c.pane)}  ·  ${c.items.length} item${c.items.length === 1 ? "" : "s"}`, items: c.items });
+				others.push({ id: c.pane, label: `${await paneLabel(c.pane)}  ·  ${c.assistant?.label ?? assistant.label} · ${c.items.length} item${c.items.length === 1 ? "" : "s"}`, items: c.items });
 			}
 		}
 		if (others.length > 0 && !hasRun) {
@@ -138,7 +129,7 @@ export async function pick(srcArg) {
 		const { preview, peek, visible } = layout();
 		const lines = [];
 		const n = primaryCount();
-		lines.push(` ${style("SHELL HANDOFF", { fg: C.accent, bold: true })} ${style(`· ${n} to run${items.length > n ? `, ${items.length - n} more block${items.length - n === 1 ? "" : "s"}` : ""}`, { fg: C.muted })}`);
+		lines.push(` ${style("SHELL HANDOFF", { fg: C.accent, bold: true })} ${style(`· ${assistant.label} · ${n} to run${items.length > n ? `, ${items.length - n} more block${items.length - n === 1 ? "" : "s"}` : ""}`, { fg: C.muted })}`);
 		lines.push("");
 		if (runner) {
 			lines.push(` ${style("→ runner", { fg: C.green })} ${style(clip(await paneLabel(runner), w - 12), { fg: C.fg })}`);
@@ -172,7 +163,7 @@ export async function pick(srcArg) {
 			for (const l of runnerPeek.slice(-peek)) lines.push(`  ${style(clip(l, w - 4), { fg: C.muted })}`);
 		}
 		lines.push("");
-		const help = "↑↓ move · space mark · a all · v full preview · ⏎ run · p paste · y copy · o output→claude · r runner · q quit";
+		const help = "↑↓ move · space mark · a all · v full preview · ⏎ run · p paste · y copy · o output→assistant · r runner · q quit";
 		lines.push(message ? ` ${style(message, { fg: C.yellow })}` : ` ${style(help, { fg: C.muted })}`);
 		out.write(CLEAR + lines.join("\r\n"));
 	};
@@ -201,15 +192,15 @@ export async function pick(srcArg) {
 			` ${style("Nothing captured for this pane yet.", { fg: C.yellow })}`,
 			"",
 			` ${style("Items are captured per pane when a reply finishes. Press the key", { fg: C.muted })}`,
-			` ${style("in the pane running Claude, after a reply with a \"! \" line, a", { fg: C.muted })}`,
-			` ${style("code block, or a denied command.", { fg: C.muted })}`,
+			` ${style(`in the ${assistant.label} pane, after a reply with`, { fg: C.muted })}`,
+			` ${style(`${assistant.captureHint}.`, { fg: C.muted })}`,
 			"",
-			` ${style("If nothing ever appears, the Stop hook is not wired: run", { fg: C.muted })}`,
-			` ${style("shell-handoff doctor", { fg: C.fg })}`,
+			` ${style("If nothing ever appears, check capture setup with", { fg: C.muted })}`,
+			` ${style(`shell-handoff doctor --assistant ${assistant.id}`, { fg: C.fg })}`,
 			"",
 		];
 		if (hasRun) {
-			lines.push(` ${style("o", { fg: C.fg })} ${style("paste the runner pane's output into Claude", { fg: C.muted })}`);
+			lines.push(` ${style("o", { fg: C.fg })} ${style("paste the runner pane's output into the assistant", { fg: C.muted })}`);
 			lines.push("");
 		}
 		if (message) lines.push(` ${message}`);
@@ -266,7 +257,9 @@ export async function pick(srcArg) {
 
 	const openPanePicker = async () => {
 		const siblings = await siblingPanes(source);
-		choices = [...siblings, { id: "new", label: "＋ split a new pane below Claude" }];
+		choices = [...siblings];
+		if (terminal.capabilities.split) choices.push({ id: "new", label: `＋ split a new pane below ${assistant.label}` });
+		if (!choices.length) throw new Error("No runner targets available; open another terminal pane first");
 		choiceCursor = 0;
 		mode = "panes";
 		return render();
@@ -296,15 +289,7 @@ export async function pick(srcArg) {
 			pendingSend = how;
 			return openPanePicker();
 		}
-		const chosen = selection();
-		const mark = await outputMark(runner);
-		// Invalidate the previous report before any input can be partially sent.
-		await writeRun(runner, null);
-		if (runner === source || !(await paneExists(runner))) throw new Error("Runner pane is unavailable; press r to choose another pane");
-		const text = chosen.map((item) => item.text).join("\n");
-		if (how === "paste") await pasteText(runner, text);
-		else await typeText(runner, text);
-		await writeRun(runner, { source, mark, at: new Date().toISOString(), commands: chosen.map((it) => it.text) });
+		await sendItems(runtime, { source, runner, items: selection(), how });
 		finish(0);
 	};
 
@@ -312,18 +297,8 @@ export async function pick(srcArg) {
 	// into the Claude pane as one bracketed paste. No Enter - it lands as a
 	// draft to read, trim or add to, then submit.
 	const report = async () => {
-		const run = runner ? await readRun(runner) : null;
-		if (!run) {
-			message = runner ? "nothing sent to the runner yet - run something first" : "no runner pane yet - run something first";
-			return render();
-		}
-		if (run.source !== source) throw new Error("The last run belongs to another Claude pane; open the popup there to return its output");
-		const { lines, command, warning } = await captureSince(runner, run.mark);
-		const idle = isShell(command);
-		const output = cleanOutput(lines, { idle });
-		await pasteText(source, [warning, formatReport({ commands: run.commands, lines: output, running: !idle })].filter(Boolean).join("\n\n"));
-		const n = output.length;
-		await flash(source, `shell-handoff: pasted ${n} line${n === 1 ? "" : "s"} of runner output into Claude - Enter to send`);
+		const result = await returnOutput(runtime, { source, runner });
+		await flash(source, `shell-handoff: ${result}`);
 		finish(0);
 	};
 
@@ -332,7 +307,7 @@ export async function pick(srcArg) {
 		const text = chosen.map((it) => it.text).join("\n");
 		const where = await copyText(text);
 		const n = lineCount(text);
-		await flash(source, `shell-handoff: copied ${n} line${n === 1 ? "" : "s"} to ${where ? `${where} and ` : ""}the tmux buffer`);
+		await flash(source, `shell-handoff: copied ${n} line${n === 1 ? "" : "s"} to ${where ? `${where} and ` : ""}the terminal buffer`);
 		finish(0);
 	};
 
@@ -371,7 +346,11 @@ export async function pick(srcArg) {
 				else if (key === "\x1b[B" || key === "j") choiceCursor = Math.min(choices.length - 1, choiceCursor + 1);
 				else if (key === "\r") {
 					source = choices[choiceCursor].id;
-					items = choices[choiceCursor].items;
+					if (router) {
+						runtime = await router.forSource(source);
+						({ assistant, store } = runtime);
+					}
+					items = await readItems(source);
 					return await enterList();
 				}
 				return await render();

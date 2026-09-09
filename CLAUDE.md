@@ -11,6 +11,19 @@ own.
 Plain JavaScript, ESM, Node 18+, zero runtime dependencies. One binary
 (`shell-handoff`) with subcommands.
 
+- `src/runtime.js` - composes the default Claude Code and tmux adapters with
+  scoped storage; accepts substitutes for tests and future integrations.
+- `src/assistants/codex.js` - Codex CLI notify capture and draft report delivery;
+  selected with `--assistant codex`. Only the final reply is captured.
+- `src/assistants/claude-code.js` - event extraction, report delivery, and hook
+  diagnostics for Claude Code.
+- `src/terminals/herdr.js` - local Herdr socket transport, pane controls, per-tab
+  runner storage, and verified output boundary with labeled history fallback.
+- `src/terminals/tmux.js` - tmux capabilities, target/storage identity, output
+  cleanup, and binding diagnostics; delegates subprocess work to `src/tmux.js`.
+- `src/handoff.js` - shared send/report workflow, source checks, run tracking.
+  No assistant-specific events or tmux commands belong here.
+- `src/items.js` - shared item kinds. See `docs/integrations.md` for contracts.
 - `src/cli.js` - entry point and subcommand dispatch (`capture`, `pick`, `doctor`)
 - `src/capture.js` - the Claude Code **Stop hook**: reads the hook event on
   stdin, writes the pane's command list. Never throws out to the session.

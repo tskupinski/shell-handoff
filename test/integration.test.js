@@ -31,10 +31,35 @@ test('tmux handoff, history loss, pane loss and server isolation', async (t) => 
 	const { tmux, pasteText, typeText, outputMark, captureSince, paneExists } = await import('../src/tmux.js');
 	const { writeItems, readItems, writeRun, readRun } = await import('../src/store.js');
 	const pane = run('display-message', '-p', '#{pane_id}');
+	// Codex notify passes JSON as argv, not stdin. Exercise CLI capture and
+	// assistant storage isolation against a real tmux server.
+	const { createRuntime } = await import('../src/runtime.js');
+	const codexRuntime = createRuntime({ assistant: 'codex' });
+	const notify = (event) => {
+		const result = spawnSync(process.execPath, [cli, 'capture', '--assistant', 'codex', JSON.stringify(event)], {
+			encoding: 'utf8', env: { ...process.env, TMUX_PANE: pane },
+		});
+		assert.equal(result.status, 0);
+		assert.equal(result.stdout + result.stderr, '');
+	};
+	notify({ type: 'agent-turn-complete', 'last-assistant-message': '! echo CODEX_CAPTURE' });
+	assert.equal((await codexRuntime.store.readItems(pane))[0].text, 'echo CODEX_CAPTURE');
+	assert.deepEqual(await readItems(pane), []);
+	notify({ type: 'approval-requested' });
+	assert.equal((await codexRuntime.store.readItems(pane)).length, 1);
+	notify({ type: 'agent-turn-complete', 'last-assistant-message': 'Done.' });
+	assert.deepEqual(await codexRuntime.store.readItems(pane), []);
 	const waitFor = async (check) => {
 		for (let i = 0; i < 100; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 20)); }
 		assert.fail('Timed out waiting for tmux');
 	};
+	// The ordinary shortcut selects Codex without an assistant flag.
+	notify({ type: 'agent-turn-complete', 'last-assistant-message': '! echo AUTO_CODEX' });
+	await typeText(pane, `XDG_CACHE_HOME=${JSON.stringify(dir)} ${JSON.stringify(process.execPath)} ${JSON.stringify(cli)} pick ${pane}`);
+	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('Codex · 1 to run'));
+	await tmux(['send-keys', '-t', pane, 'q']);
+	await waitFor(async () => !(await tmux(['capture-pane', '-p', '-t', pane])).includes('SHELL HANDOFF'));
+	notify({ type: 'agent-turn-complete', 'last-assistant-message': 'Done.' });
 	await typeText(pane, "printf 'BEFORE\\n'");
 	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('BEFORE\n'));
 	const mark = await outputMark(pane);
@@ -66,7 +91,7 @@ test('tmux handoff, history loss, pane loss and server isolation', async (t) => 
 	await typeText(pane, `XDG_CACHE_HOME=${JSON.stringify(dir)} ${JSON.stringify(process.execPath)} ${JSON.stringify(cli)} pick ${pane}`);
 	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('SHELL HANDOFF'));
 	await tmux(['send-keys', '-t', pane, 'o']);
-	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('another Claude pane'));
+	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('another Claude Code pane'));
 	await tmux(['send-keys', '-t', pane, 'q']);
 	await typeText(pane, "seq 1 200");
 	await waitFor(async () => (await tmux(['capture-pane', '-p', '-t', pane])).includes('200'));

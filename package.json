@@ -1,10 +1,12 @@
 {
 	"name": "shell-handoff",
 	"version": "1.0.0",
-	"description": "Run the shell commands Claude Code hands you in a tmux pane, then bring the output back into Claude",
+	"description": "Run commands from Claude Code or Codex in a tmux or Herdr pane, then bring the output back",
 	"keywords": [
 		"claude-code",
+		"codex",
 		"tmux",
+		"herdr",
 		"runner",
 		"hooks",
 		"cli",
@@ -23,6 +25,7 @@
 	"files": [
 		"bin",
 		"src",
+		"docs",
 		"README.md",
 		"LICENSE"
 	],
