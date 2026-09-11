@@ -132,6 +132,11 @@ a new assistant reply, then choose your runner pane again.
 
 ## Integration development
 
+A Rust migration is in progress alongside the JavaScript implementation.
+The first milestone implements `capture` and `doctor`; the installed launcher
+and picker still use JavaScript. See [Rust development](docs/rust-migration.md)
+for building and checking compatibility.
+
 Setup guides live in `docs/assistants/` and `docs/terminals/`. The terminal
 category includes multiplexers such as tmux and can also cover other terminal
 backends. See [the integration contract](docs/integrations.md) for adapter

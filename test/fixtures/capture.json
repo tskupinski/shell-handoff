@@ -1,0 +1,482 @@
+[
+  {
+    "name": "bang lines and inline text",
+    "text": "Do this:\n```bash\n! tmux -V\n  ! bin/tunnel start\n```\nor `! echo hi` inline\n`! echo wrapped`",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "tmux -V"
+        },
+        {
+          "kind": "command",
+          "text": "bin/tunnel start"
+        },
+        {
+          "kind": "command",
+          "text": "echo wrapped"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "command",
+          "text": "tmux -V"
+        },
+        {
+          "kind": "command",
+          "text": "bin/tunnel start"
+        },
+        {
+          "kind": "command",
+          "text": "echo wrapped"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dependent snippet and heredoc",
+    "text": "```bash run\n\ncd ~/x\ncat <<'EOF'\nhello\nEOF\n./script.sh\n\n```",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "snippet",
+          "text": "cd ~/x\ncat <<'EOF'\nhello\nEOF\n./script.sh",
+          "lang": "bash"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "snippet",
+          "text": "cd ~/x\ncat <<'EOF'\nhello\nEOF\n./script.sh",
+          "lang": "bash"
+        }
+      ]
+    }
+  },
+  {
+    "name": "run aliases and bang stripping",
+    "text": "```run\n! a\n! b\n```\n~~~SH RUNNER\necho c\n~~~",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "snippet",
+          "text": "a\nb",
+          "lang": ""
+        },
+        {
+          "kind": "snippet",
+          "text": "echo c",
+          "lang": "sh"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "snippet",
+          "text": "a\nb",
+          "lang": ""
+        },
+        {
+          "kind": "snippet",
+          "text": "echo c",
+          "lang": "sh"
+        }
+      ]
+    }
+  },
+  {
+    "name": "lower tier and consumed blocks",
+    "text": "```yaml\nkey: value\nlist:\n  - a\n```\n```sh\n# comment\n! cmd\n```\n```\n$ ls\nfoo\n```",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "cmd"
+        },
+        {
+          "kind": "block",
+          "text": "key: value\nlist:\n  - a",
+          "lang": "yaml"
+        },
+        {
+          "kind": "block",
+          "text": "$ ls\nfoo",
+          "lang": ""
+        }
+      ],
+      "codex": [
+        {
+          "kind": "command",
+          "text": "cmd"
+        },
+        {
+          "kind": "block",
+          "text": "key: value\nlist:\n  - a",
+          "lang": "yaml"
+        },
+        {
+          "kind": "block",
+          "text": "$ ls\nfoo",
+          "lang": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "indented and nested fences",
+    "text": "1. step\n   ~~~json\n   {\n     \"a\": 1\n   }\n   ~~~\n````md\n```\ninner\n```\n````",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "block",
+          "text": "{\n  \"a\": 1\n}",
+          "lang": "json"
+        },
+        {
+          "kind": "block",
+          "text": "```\ninner\n```",
+          "lang": "md"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "block",
+          "text": "{\n  \"a\": 1\n}",
+          "lang": "json"
+        },
+        {
+          "kind": "block",
+          "text": "```\ninner\n```",
+          "lang": "md"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unclosed and mismatched fences",
+    "text": "```py\nprint(1)\n~~~\nprint(2)",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "block",
+          "text": "print(1)\n~~~\nprint(2)",
+          "lang": "py"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "block",
+          "text": "print(1)\n~~~\nprint(2)",
+          "lang": "py"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unicode and empty blocks",
+    "text": "! echo zażółć 🦀\n```run\n\n```\n```json\n{}\n```\n! echo zażółć 🦀",
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "echo zażółć 🦀"
+        },
+        {
+          "kind": "block",
+          "text": "{}",
+          "lang": "json"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "command",
+          "text": "echo zażółć 🦀"
+        },
+        {
+          "kind": "block",
+          "text": "{}",
+          "lang": "json"
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty reply",
+    "text": "Done.",
+    "expected": {
+      "claude-code": [],
+      "codex": []
+    }
+  },
+  {
+    "name": "CRLF input",
+    "text": "```bash run\r\ncd project\r\nnpm test\r\n```\r\n",
+    "expected": {
+      "claude-code": [],
+      "codex": []
+    }
+  },
+  {
+    "name": "object final message",
+    "event": {
+      "last_assistant_message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "! echo object"
+          },
+          {
+            "type": "tool_use",
+            "text": "! ignored"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "echo object"
+        }
+      ],
+      "codex": []
+    }
+  },
+  {
+    "name": "nested final message",
+    "event": {
+      "last_assistant_message": {
+        "z": {
+          "text": "! echo first"
+        },
+        "a": [
+          {
+            "text": "! echo second"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "echo first"
+        },
+        {
+          "kind": "command",
+          "text": "echo second"
+        }
+      ],
+      "codex": []
+    }
+  },
+  {
+    "name": "turn boundary, denials, tiers and deduplication",
+    "entries": [
+      {
+        "type": "user",
+        "message": {
+          "content": "old prompt"
+        }
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "! OLD"
+            }
+          ]
+        }
+      },
+      {
+        "type": "user",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "new prompt"
+            }
+          ]
+        }
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "t1",
+              "name": "Bash",
+              "input": {
+                "command": "gcloud auth login"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "user",
+        "message": {
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "t1",
+              "is_error": true,
+              "content": [
+                {
+                  "text": "Permission denied"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "```toml\nx = 1\n```"
+            }
+          ]
+        }
+      },
+      {
+        "type": "assistant",
+        "isSidechain": true,
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "! sidechain"
+            }
+          ]
+        }
+      }
+    ],
+    "event": {
+      "last_assistant_message": "! gcloud auth login\n! tmux -V\n```bash run\nset -e\nmake\n```\n```json\n{}\n```"
+    },
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "denied",
+          "text": "gcloud auth login"
+        },
+        {
+          "kind": "command",
+          "text": "tmux -V"
+        },
+        {
+          "kind": "snippet",
+          "text": "set -e\nmake",
+          "lang": "bash"
+        },
+        {
+          "kind": "block",
+          "text": "x = 1",
+          "lang": "toml"
+        },
+        {
+          "kind": "block",
+          "text": "{}",
+          "lang": "json"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "command",
+          "text": "gcloud auth login"
+        },
+        {
+          "kind": "command",
+          "text": "tmux -V"
+        },
+        {
+          "kind": "snippet",
+          "text": "set -e\nmake",
+          "lang": "bash"
+        },
+        {
+          "kind": "block",
+          "text": "{}",
+          "lang": "json"
+        }
+      ]
+    }
+  },
+  {
+    "name": "partial transcript lines",
+    "prefix": "broken json\n",
+    "suffix": "{\"type\":",
+    "entries": [
+      {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "! earlier"
+            }
+          ]
+        }
+      }
+    ],
+    "event": {
+      "last_assistant_message": "! final"
+    },
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "earlier"
+        },
+        {
+          "kind": "command",
+          "text": "final"
+        }
+      ],
+      "codex": [
+        {
+          "kind": "command",
+          "text": "final"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tail read skips partial first entry",
+    "padding": 530000,
+    "entries": [
+      {
+        "type": "user",
+        "message": {
+          "content": "new turn"
+        }
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "! tail"
+            }
+          ]
+        }
+      }
+    ],
+    "event": {},
+    "expected": {
+      "claude-code": [
+        {
+          "kind": "command",
+          "text": "tail"
+        }
+      ],
+      "codex": []
+    }
+  }
+]
